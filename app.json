@@ -28,7 +28,8 @@
     },
     "plugins": [
       "react-native-video",
-      "expo-video"
+      "expo-video",
+      "expo-asset"
     ]
   }
 }

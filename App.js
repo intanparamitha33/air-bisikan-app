@@ -1,9 +1,10 @@
 import "react-native-gesture-handler";
 import Navigation from "./navigation/Navigation";
+import Model from './components/Model'; // import komponen WebView
 
 export default function App() {
   return (
-    <Navigation />
+    <Navigation/>
   );
 }
 

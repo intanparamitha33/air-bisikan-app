@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Deteksi Gestur Isyarat BISINDO</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>    
+  </head>
+  <body>
+    <h3>TFJS - Test Deteksi</h3>
+    <p id="status">Model loading...</p>
+    <video id="video-preview" controls autoplay muted width="300"></video>
+
+    <script>
+      let model;
+      const frameNeeded = 30;
+      let extractedFrames = [];
+      let lastValidFrame = null;
+
+      console.log("index.html ready - waiting for messages");
+
+      // load model immediately
+      loadModel();
+
+      // document. or window. depends on each case behavior
+      document.addEventListener("message", async (event) => {
+        // versi pakai videoUri
+        // if (msg?.startsWith('VIDEO_URI:')) {
+        //   const videoUri = msg.replace('VIDEO_URI:', '');
+        //   document.getElementById('status').innerText = `Received video uri: ${testVidUri}`; // test video uri passed
+        //   processVideo(videoUri);
+        // }
+
+        console.log("Starting listener... index.html");
+        console.log("Entering listener...", event.data);
+
+        try {
+          // const msg = event.data;
+          const msg = JSON.parse(event.data);
+          console.log("📩 Received message from React Native:", msg); // print few
+          console.log("Received message:", msg.type);
+
+          // versi dengan base64
+          if (msg.type === "VIDEO_BASE64") {
+            // const base64 = msg.replace("VIDEO_BASE64:", "");
+            document.getElementById("status").innerText = "🎬 Video received (base64). Try processing...";
+            // continue to video processing
+            await processVideo(msg.data);
+          }
+        } catch (error) {
+          console.error("❌ Error handling base64 video:", error);
+          document.getElementById("status").innerText = "❌ Failed to process video";
+          window.ReactNativeWebView?.postMessage("ERROR:", error.message);
+        }
+      })
+
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      // Initialize MediaPipe Hands
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      })
+
+      // Load TensorFlow.js model
+      async function loadModel() {
+        try {
+          model = await tf.loadGraphModel('http://192.168.1.6.:8080/model.json');
+          document.getElementById("status").innerText = "Model loaded!";
+          console.log("✅ Model loaded!");
+          window.ReactNativeWebView?.postMessage("MODEL_LOADED");
+          console.log("✅ Done - Sent response model loaded");
+        } catch (error) {
+          document.getElementById("status").innerText = "Failed to load model";
+          console.error("❌ Failed to load model: ", error);
+          window.ReactNativeWebView?.postMessage("ERROR: " + error.message);
+        }
+      }
+
+      // Seek to specific time in video
+      function seekVideo(video, time) {
+        return new Promise((resolve) => {
+          video.currentTime = time;
+          video.onseeked = () => resolve();
+          video.onerror = () => reject(new Error("Video seek failed."));
+        })
+      }
+
+      // Check if keypoints are valid (not all zeros)
+      function isValidKeypoints(keypoints) {
+        return keypoints.some((val) => val !== 0);
+      }
+
+      // Extract frames with hand landmarks
+      async function extractKeyFrames(video) {
+        extractedFrames = [];
+        lastValidFrame = null;
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        const totalFrames = video.duration * video.fps || 30; // fallback if fps unknown
+        const frameInterval = video.duration / frameNeeded; // evenly spaced frames
+
+        console.log(`📽️ Video info: width=${videoWidth}, height=${videoHeight}, duration=${video.duration}s`);
+
+        let processedFrameCount = 0;
+        let frameIdx = 0;
+
+        while (processedFrameCount < frameNeeded && frameIdx < totalFrames) {
+          const time = frameIdx * frameInterval;
+          await seekVideo(video, time);
+          const keypoints = await detectHands(video, videoWidth, videoHeight);
+
+          if (keypoints && isValidKeypoints(keypoints)) {
+            extractedFrames.push(keypoints);
+            lastValidFrame = keypoints.slice(); // copy to avoid reference issue
+            processedFrameCount++;
+            console.log(`Frame ${frameIdx + 1}: Valid hand data, total valid=${processedFrameCount}`);
+          } else {
+            console.log(`Frame ${frameIdx + 1}: No valid hand detected`);
+          }
+          frameIdx++;
+        }
+
+        // pad if insufficient frames
+        while (extractedFrames.length < frameNeeded) {
+          if (lastValidFrame) {
+            extractedFrames.push(lastValidFrame.slice());
+            console.log("Padding with last valid frame done...");
+          } else {
+            extractedFrames.push(new Array(84).fill(0));
+            console.log("Padding with zeros done...");
+          }
+        }
+
+        if (extractedFrames.length === 0) {
+          throw new Error("No hand detected in any frame");
+        }
+
+        console.log(`Extracted ${extractedFrames.length} frames with 84 keypoints each`);
+      }
+
+      // Frame Processing - detect hands in current frame
+      async function detectHands(video, videoWidth, videoHeight) {
+        // Process frame
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+
+        return new Promise((resolve) => {
+          hands.onResults((results) => {
+            let frameKeypoints = new Array(84).fill(0); // initialize 84 zeros
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+              const numDetected = results.multiHandLandmarks.length;
+              console.log(`Detected ${numDetected} hands`);
+              
+              // process up to 2 hands
+              for (let i = 0; i < Math.min(numDetected, 2); i++) {
+                const handLandmarks = results.multiHandLandmarks[i];
+                let keypoints = [];
+
+                for (let lm in handLandmarks) {
+                  const x = lm.x * videoWidth; // pixel coordinates (like in Colab)
+                  const y = lm.y * videoHeight;
+                  keypoints.push(x, y);
+                }
+
+                // copy to frameKeypoints (42 values per hand)
+                const startIdx = i * 21 * 2;
+                frameKeypoints.splice(startIdx, 21 * 2, ...keypoints);
+              }
+            }
+            resolve(frameKeypoints);
+          })          
+          hands.send({ image : canvas });
+        })
+      }
+      
+      // Normalize landmarks (divide by 1080)
+      function normalizeLandmarks(keypoints) {
+        const maxValue = 1080.0;
+        const normalizedKeypoints = keypoints.map((val) => val / maxValue);
+        // const normalized = new Array(84).fill(0); // 2 hands * 21 * 2
+
+        console.log("Sample normalized values:", normalizedKeypoints.slice(0, 4).map((v) => v.toFixed(4)));
+        return normalizedKeypoints;
+      }
+
+      // Prepare input tensor (1, 84, 30)
+      function prpInputTensor() {
+        // Pad or trunc exactly 30 frames
+        let frames = extractedFrames.slice(0, frameNeeded);
+        console.log("Original frame shape:", [frames.length, frames[0].length]);
+
+        // normalize keypoints
+        frames = frames.map(frame => normalizeLandmarks(frame));
+
+        // transpose frames dari [30, 84] menjadi [84, 30]
+        let tensor = tf.tensor2d(frames, [frameNeeded, 84]);
+        tensor = tensor.transpose([1, 0]);
+
+        // add batch dimension
+        tensor = tensor.expandDims(0); // [1, 84, 30]
+
+        console.log("Final tensor shape:", tensor.shape);
+        console.log("Sample normalized values (frame 0, point 0):", frames[0][0].toFixed(4), frames[0][1].toFixed(4));
+
+        // return tf.tensor3d([frames], [1, 84, frameNeeded]);
+        return tensor;
+      }
+
+      // Run model inference
+      async function runInference(inputTensor) {
+        try {
+          const output = model.execute({ input: inputTensor });
+          console.log("Raw model output:", output.arraySync()); // Debug output
+          const detection = await output.argMax(-1).data();
+          return detection[0]; // return detected class index
+        } catch (error) {
+          throw new Error(`Inference failed: ${error.message}`);
+        }
+        
+      }
+
+      // Process video from React Native
+      async function processVideo(base64Video) {
+        console.log("index.html - Start processing video")
+        try {
+          document.getElementById("status").innerText = "Processing video...";
+          console.log("📥 Base64 received, length:", base64Video.length);
+          console.log("📥 Base64 preview:", base64Video.slice(0, 30)); // Cek header
+
+          const video = document.createElement('video');
+          // video.src = inputVideoUri;
+          video.src = `data:video/mp4;base64,${base64Video}`;
+          console.log("index.html - Process Video - video.src:", video.src)
+          video.crossOrigin = 'anonymous';
+
+          // wait for video metadata
+          await new Promise((resolve, reject) => {
+            video.onloadedmetadata = () => { 
+              console.log("✅ Video metadata loaded: duration =");
+              video.currentTime = 0;
+              resolve();
+            }
+            // video.onloadedmetadata = resolve();
+            video.onerror = () => {
+              console.error("❌ Video failed to load, error code:", video.error.code, 'message:', video.error.message);
+              reject(new Error(`Failed to load video: ${video.error.message}`));
+            }
+            video.oncanplay = () => {
+              console.log("📺 Video can play");
+            };
+          })
+
+          await hands.initialize();
+          console.log("🤲 MediaPipe Hands initialized");
+
+          // Extract frames with hand landmarks
+          await extractKeyFrames(video);
+
+          // Prepare tensor input (1, 84, 30)
+          const inputTensor = prpInputTensor();
+
+          // Run model inference
+          const result = await runInference(inputTensor);
+
+          console.log("🎉 Detection Result:", result);
+          // Send result back to app (RN)
+          window.ReactNativeWebView?.postMessage("RESULT:" + result);
+
+        } catch (error) {
+          console.error("Video processing failed:", error);
+          window.ReactNativeWebView?.postMessage("ERROR:" + error.message);
+        }
+      }
+      
+    </script>
+  </body>
+</html>
+
+<!--
+Sip, mantap! Bagian index.html udah siap untuk dipakai dan fleksibel nanti buat nerima input dari React Native-nya 💪
+
+Kalau kamu udah oke, next step kita bisa lanjut ke:
+
+komunikasi antara React Native (WebView) ↔ HTML (model predict)
+
+atau ke bagian ekstraksi keypoint + ambil 30 frame
+
+atau bahkan bikin UX-nya supaya jelas alur upload → proses → tampil output
+
+Kamu mau lanjut ke bagian mana dulu?
+
+
+Initialize when page loads. when?
+window.onload = async () => {
+  await loadModel();
+
+  // Listen for messages from app
+  window.addEventListener('message', (event) => {
+    const testVidUri = event.data;
+    document.getElementById('status').innerText = `Dapat video uri: ${testVidUri}`;
+
+    if (event.data && event.data.startsWith('VIDEO_URI:')) {
+      const videoUri = event.data.replace('VIDEO_URI:', '');
+      processVideo(videoUri);
+    }
+  })
+}
+
+document.AddEventListener old
+
+document.addEventListener("message", async (event) => {
+        // const msg = event.data;
+        const msg = JSON.parse(event.data);
+        console.log("📩 Received message from React Native:", msg.slice(0, 100)); // print few
+        console.log("Received message:". msg.type);
+
+        // versi pakai videoUri
+        // if (msg?.startsWith('VIDEO_URI:')) {
+        //   const videoUri = msg.replace('VIDEO_URI:', '');
+        //   document.getElementById('status').innerText = `Received video uri: ${testVidUri}`; // test video uri passed
+        //   processVideo(videoUri);
+        // }
+
+        // versi dengan base64
+        if (msg?.startsWith("VIDEO_BASE64:")) {
+          const base64 = msg.replace("VIDEO_BASE64:", "");
+          document.getElementById("status").innerText = "🎬 Video received (base64). Try processing...";
+
+          try {
+            // convert base64 to blob -> so we can process the video
+            const resp = await fetch(`data:video/mp4;base64,${base64}`);
+            const videoBlob = await resp.blob();
+
+            // convert blob to url for preview or processing
+            // const blobUrl = URL.createObjectURL(videoBlob);
+
+            // Optional: preview in <video> tag
+            const videoElement = document.getElementById("video-preview");
+            if (videoElement) {
+              videoElement.src = blobUrl;
+              videoElement.load();
+            }
+
+            // check if model already loaded or not
+
+
+            // continue to video processing
+            processVideo(blobUrl);
+          } catch (error) {
+            console.error("❌ Error handling base64 video:", error);
+            document.getElementById("status").innerText = "❌ Failed to process video";
+            window.ReactNativeWebView?.postMessage("ERROR:", error.message);
+          }
+          
+        }
+      })
+
+
+extractKeyFrames old
+
+async function extractKeyFrames(video) {
+        extractedFrames = [];
+        lastValidFrame = null;
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        const totalFrames = video.duration * video.fps || 30; // fallback if fps unknown
+        const frameInterval = video.duration / 30; // evenly spaced frames
+
+        console.log(`📽️ Video info: width=${videoWidth}, height=${videoHeight}, duration=${video.duration}s`);
+
+        for (let i = 0; i < video.duration * 10 && extractedFrames.length < frameNeeded; i++) {
+          await seekVideo(video, i / 10);
+          const landmarks = await detectHands(video);
+
+          if (landmarks) {
+            lastValidFrame = landmarks; // store for padding
+            extractedFrames.push(landmarks);
+            console.log(`Frame ${extractedFrames.length}: Valid hand data`);
+          }
+        }
+
+        if (extractedFrames.length > 0 && extractedFrames[0]) {
+          console.log("First frame raw (first 4 values):", extractedFrames[0].slice(0, 4).map(v => v.toFixed(4)));
+        } else {
+          console.warn("⚠️ No valid frames extracted, cannot log first frame preview.");
+        }
+
+
+        // pad if insufficient frames
+        while (extractedFrames.length < frameNeeded && lastValidFrame) {
+          extractedFrames.push(lastValidFrame);
+          console.log("Padding with last valid frame done...")
+        }
+
+        if (extractedFrames.length === 0) {
+          throw new Error("No hand detected in any frame");
+        }
+      }
+-->

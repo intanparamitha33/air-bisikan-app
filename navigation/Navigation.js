@@ -52,9 +52,8 @@ function TabGroup() {
             tabBarActiveTintColor: '#000071',
         })}
         >
-            <Tab.Screen name={homeName} component={HomeScreen}/>
+            <Tab.Screen name={homeName} component={HomeScreen} color='#000071'/>
             <Tab.Screen name={libraryName} component={LibStackGroup} options={{ headerShown: false }}/>
-            {/* <Tab.Screen name={libraryName} component={LibraryScreen}/> */}
         </Tab.Navigator>
     )
 }
