@@ -17,10 +17,34 @@
       let extractedFrames = [];
       let lastValidFrame = null;
 
+      // define classes and support set
+      const gestureLabels = [
+        // A-Z
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+        "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+        "U", "V", "W", "X", "Y", "Z",
+
+        // 0-9
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+
+        // word
+        "Aku", "Kamu", "Cinta", "Kenapa", "Tidak", "Kecewa",
+        "Mau", "Bicara", "Semangat", "TerimaKasih",
+        "Sedih", "Maaf", "Sabar", "Sayang", "Senang"
+      ];
+      let supportSet = []; // array for support set's keypoints
+      let supportLabels = []; // label for support set
+      let classNames = []; // class name for support set
+
       console.log("index.html ready - waiting for messages");
 
       // load model immediately
       loadModel();
+      console.log("DONE - load model");
+
+      // load support set
+      loadSupportSet();
+      console.log("DONE - load support set");
 
       // document. or window. depends on each case behavior
       document.addEventListener("message", async (event) => {
@@ -69,7 +93,7 @@
       // Load TensorFlow.js model
       async function loadModel() {
         try {
-          model = await tf.loadGraphModel('http://192.168.1.6.:8080/model.json');
+          model = await tf.loadGraphModel("http://192.168.110.112:8080/model.json");
           document.getElementById("status").innerText = "Model loaded!";
           console.log("✅ Model loaded!");
           window.ReactNativeWebView?.postMessage("MODEL_LOADED");
@@ -81,9 +105,75 @@
         }
       }
 
+      // Load support set
+      async function loadSupportSet() {
+        // Dalam aplikasi nyata, Anda perlu memuat support set dari dataset eksternal
+        // Untuk simulasi, kita akan membuat data dummy (harusnya dari dataset seperti di Python)
+
+        // url supp set keypoints 
+        // 1shot: https://drive.google.com/file/d/1iHv5jMT3wwVQ4LhN2U_QNervaPXMVxZx/view?usp=sharing
+        // 5shot: https://drive.google.com/file/d/1AAqUtFV-h7bwutK0A-1ZLE1fgtIp9bH7/view?usp=sharing 
+        // 10shot: https://drive.google.com/file/d/11cJd7s0j2kWeTiDofIVc0wtpUCrEzRhg/view?usp=sharing 
+
+        // url for fetch
+        // 1shot: https://drive.google.com/uc?export=download&id=1iHv5jMT3wwVQ4LhN2U_QNervaPXMVxZx
+        // 5shot: https://drive.google.com/uc?export=download&id=1AAqUtFV-h7bwutK0A-1ZLE1fgtIp9bH7
+        // 10shot: https://drive.google.com/uc?export=download&id=11cJd7s0j2kWeTiDofIVc0wtpUCrEzRhg
+
+        const jsonUrl = "https://drive.google.com/uc?export=download&id=1iHv5jMT3wwVQ4LhN2U_QNervaPXMVxZx";
+        const resp = await fetch(jsonUrl);
+        if (!resp.ok) {
+          throw new Error(`Failed to fetch support set: ${resp.statusText}`);
+        }
+        const data = await resp.json();
+
+        
+        // const kShot = 1; // 1 sample per class (could be adjusted) - for dummy
+        supportSet = [];
+        supportLabels = [];
+        classNames = [];
+
+        // for dummy
+        // for (let i = 0; i < gestureLabels.length; i++) {
+        //   const className = gestureLabels[i];
+        //   // Simulasi: Buat data dummy untuk support set (30 frame, 84 keypoints)
+        //   const dummySample = new Array(30).fill(0).map(() => new Array(84).fill(Math.random())); // Data acak
+        //   supportSet.push(dummySample);
+        //   supportLabels.push(i);
+        //   classNames.push(className);
+        // }
+
+        // data validation
+        if (!Array.isArray(data) || data.length !== gestureLabels.length) {
+          throw new Error(`Support set data length (${data.length}) does not match gestureLabels (${gestureLabels.length})`);
+        }
+
+        data.forEach((item, idx) => {
+          const label = item.label;
+          const keypoints = item.keypoints;
+
+          // label validation
+          if (!gestureLabels.includes(label)) {
+            console.warn(`Label ${label} not in gestureLabels, skipping...`);
+            return;
+          }
+
+          // keypoints validation -> must be [30, 84]
+          if (!Array.isArray(keypoints) || keypoints.length !== 30 || keypoints[0].length !== 84) {
+            throw new Error(`Invalid keypoints shape for class ${label}: Expected [30, 84], got [${keypoints.length}, ${keypoints[0]?.length}]`);
+          }
+
+          supportSet.push(keypoints);
+          supportLabels.push(idx);
+          classNames.push(label);
+        })
+
+        console.log(`✅ Loaded support set for ${supportSet.length} classes, ${kShot} samples per class`);
+      }
+
       // Seek to specific time in video
       function seekVideo(video, time) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           video.currentTime = time;
           video.onseeked = () => resolve();
           video.onerror = () => reject(new Error("Video seek failed."));
@@ -165,7 +255,7 @@
                 const handLandmarks = results.multiHandLandmarks[i];
                 let keypoints = [];
 
-                for (let lm in handLandmarks) {
+                for (const lm in handLandmarks) {
                   const x = lm.x * videoWidth; // pixel coordinates (like in Colab)
                   const y = lm.y * videoHeight;
                   keypoints.push(x, y);
@@ -215,17 +305,53 @@
         return tensor;
       }
 
-      // Run model inference
-      async function runInference(inputTensor) {
+      // Compute pairwise distances (Euclidean)
+      function computePairwiseDist(embedding1, embedding2) {
+        // embedding1: [1, 128], embedding2: [numSupport, 128]
+        const diff = embedding1.sub(embedding2); // [numSupport, 128]
+        const squaredDiff = diff.square(); // [numSupport, 128]
+        const distances = squaredDiff.sum(1).sqrt(); // [numSupport]
+        return distances;
+      }
+
+      // Run model inference & predict class
+      async function runInference(inputTensor, supportTensor, supportLabels, classNames) {
         try {
-          const output = model.execute({ input: inputTensor });
-          console.log("Raw model output:", output.arraySync()); // Debug output
-          const detection = await output.argMax(-1).data();
-          return detection[0]; // return detected class index
+          // compute embedding for input video
+          const videoEmbed = model.execute({ input: inputTensor }); // [1, 128]
+          console.log("Video embedding shape:", videoEmbed.shape);
+
+          // compute embedding for support set
+          const supportEmbed = model.execute({ input: supportTensor }); // [numSupport, 128]
+          console.log("Support embedding shape:", supportEmbed.shape);
+
+          // calculate the Euclidean distance
+          const pairwiseDist = computePairwiseDist(videoEmbed, supportEmbed); // [numSupport]
+          const distance = pairwiseDist.arraySync();
+
+          // find class with the closest distance
+          const nearestIdx = pairwiseDist.argMin().dataSync()[0];
+          const predictedLabel = supportLabels[nearestIdx];
+          const predictedClass = classNames[predictedLabel];
+
+          // create dictionary of distance for analysis
+          const distanceDict = {};
+          for (let i = 0; i < distance.length; i++) {
+            const label = supportLabels[i];
+            const classNm = classNames[label];
+            distanceDict[classNm] = distance[i];
+          }
+
+          return { predictedClass, distanceDict };
+
+          // old way - usual classifier
+          // const output = model.execute({ input: inputTensor });
+          // console.log("Raw model output:", output.arraySync()); // Debug output
+          // const detection = await output.argMax(-1).data();
+          // return detection[0]; // return detected class index
         } catch (error) {
           throw new Error(`Inference failed: ${error.message}`);
-        }
-        
+        } 
       }
 
       // Process video from React Native
@@ -266,18 +392,36 @@
           await extractKeyFrames(video);
 
           // Prepare tensor input (1, 84, 30)
-          const inputTensor = prpInputTensor();
+          const inputTensor = prpInputTensor(extractedFrames);
 
-          // Run model inference
-          const result = await runInference(inputTensor);
+          // Prepare support set tensor
+          const supportFrames = supportSet.map(frames => frames.map(frame => normalizeLandmarks(frame)));
+          let supportTensor = tf.tensor3d(supportFrames, [supportFrames.length, 30, 84]);
+          supportTensor = supportTensor.transpose([0, 2, 1]); // [numSupport, 84, 30]
+
+          // Predict class
+          const { predictedClass, distanceDict } = await predictClass(inputTensor, supportTensor, supportLabels, classNames);
+
+          // Run model inference - old way
+          // const result = await runInference(inputTensor);
 
           console.log("🎉 Detection Result:", result);
+          console.log("Distances to each class:", distanceDict);
+
           // Send result back to app (RN)
-          window.ReactNativeWebView?.postMessage("RESULT:" + result);
+          const resultMsg = JSON.stringify({
+            predictedClass: predictedClass,
+            distances: distanceDict
+          })
+          // window.ReactNativeWebView?.postMessage("RESULT:" + result);
+          window.ReactNativeWebView?.postMessage(resultMsg);
+
+          document.getElementById("status").innerText =  `Predicted Class: $predictedClass`;
 
         } catch (error) {
           console.error("Video processing failed:", error);
           window.ReactNativeWebView?.postMessage("ERROR:" + error.message);
+          document.getElementById("status").innerText = "❌ Failed to process video";
         }
       }
       

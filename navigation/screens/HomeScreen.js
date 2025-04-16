@@ -4,6 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as FileSystem from 'expo-file-system';
 import Model from '../../components/Model';
+import { ScrollView } from 'react-native-gesture-handler';
 
 // showing video on screen
 const VideoPlayer = ({ videoUrl }) => {
@@ -24,7 +25,9 @@ const VideoPlayer = ({ videoUrl }) => {
 
 const HomeScreen = () => {
   const [video, setVideo] = useState(null);
-  const [detectionResult, setDetectionResult] = useState(null);
+  // const [detectionResult, setDetectionResult] = useState(null); // old way - before json value being passed
+  const [prediction, setPrediction] = useState(null); // for predictedClass
+  const [distances, setDistances] = useState(null); // for distances
 
   const pickVideo = async () => {
     try {
@@ -35,8 +38,8 @@ const HomeScreen = () => {
 
       console.log("Result Document Picker: ", res);
 
-      if (res.type === 'cancel') {
-        Alert.alert('Cancelled', 'Video Batal Dipilih');
+      if (res.type === "cancel") {
+        Alert.alert("Cancelled", "Video Batal Dipilih");
         return;
       }
 
@@ -54,17 +57,39 @@ const HomeScreen = () => {
 
       // setVideo(videoData);
       setVideo({ ...videoData, uri: newPath }); // salin semua videoData, ganti uri-nya saja
-      setDetectionResult(null); // reset deteksi lama
-      Alert.alert('Video Dipilih!', `File: ${videoData.name}\nUkuran: ${videoData.size} bytes`);
+      setPrediction(null);
+      setDistances(null);
+      // setDetectionResult(null); // reset deteksi lama
+      Alert.alert("Video Dipilih!", `File: ${videoData.name}\nUkuran: ${videoData.size} bytes`);
     } catch (err) {
-      Alert.alert('Error', 'Gagal Pilih Video');
+      Alert.alert("Error", "Gagal Pilih Video");
       console.error(err);
     }
   };
 
   const clearVideo = () => {
     setVideo(null);
+    setPrediction(null);
+    setDistances(null);
     console.log("Video is cleared...");
+  }
+
+  const handleDetection = (result) => {
+    console.log("Model detection result:", result);
+    
+    try {
+      if (result.error) {
+        Alert.alert("Error", result.error);
+        return;
+      }
+      // parse JSON from result
+      const { predictedClass, distances } = result;
+      setPrediction(predictedClass);
+      setDistances(distances);
+    } catch (error) {
+      console.error("Failed to parse detection result:", error);
+      Alert.alert("Error", "Failed to proceed detection result");
+    }
   }
 
   return (
@@ -79,18 +104,33 @@ const HomeScreen = () => {
           {/* WebView untuk model deteksi */}
           <Model
             inputVideoUri={video.uri}
-            onDetection={(result) => {
-              console.log("Hasil deteksi dari model: ", result);
-              setDetectionResult(result);
-            }}
+            onDetection={handleDetection}
           />
 
-          {detectionResult && (
+          {prediction && (
+            <View style={styles.resultBox}>
+              <Text style={styles.resultText}>Hasil Deteksi:</Text>
+              <Text style={styles.resultText}>{prediction}</Text>
+            </View>
+          )}
+
+          {distances && (
+            <ScrollView style={styles.distancesBox}>
+              <Text style={styles.resultText}>Jarak ke Setiap Class:</Text>
+              {Object.entries(distances).map(([className, distance]) => (
+                <Text key={className} style={styles.distanceText}>
+                  {className}: {distance.toFixed(4)}
+                </Text>
+              ))}
+            </ScrollView>
+          )}
+
+          {/* {detectionResult && (
             <View style={styles.resultBox}>
               <Text style={styles.resultText}>Hasil Deteksi:</Text>
               <Text style={styles.resultText}>{detectionResult}</Text>
             </View>
-          )}
+          )} */}
         </View>
       )}
       <Button title="Hapus Video" onPress={clearVideo} color='#C0C0C0'/>
@@ -129,6 +169,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
   },
+  distancesBox: {
+    marginTop: 10,
+    maxHeight: 150,
+    width: '100%',
+  },
+  distanceText: {
+    fontSize: 14,
+    color: '#333',
+  }
 });
 
 export default HomeScreen;

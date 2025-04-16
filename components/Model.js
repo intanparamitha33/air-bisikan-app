@@ -90,21 +90,43 @@ export default function Model({ inputVideoUri, onDetection }) {
       webviewDebuggingEnabled={true} // enable debugging webview
       onMessage={(event) => {
         const msg = event.nativeEvent.data;
-
         console.log(msg);
-        if (msg === "MODEL_LOADED") {
-          // Model ready, send videoUri
-          setModelLoaded(true);
-          console.log("✅ Model loaded - ready in WebView - setModelLoaded True");
-        } else if (msg.startsWith("RESULT:")) {
-          const result = msg.replace("RESULT:", "");
-          console.log("Detection Result:", result);
-          onDetection(result);
-          // update UI with result
-        } else if (msg.startsWith("ERROR:")) {
-          // handle errors
-          console.error("WebView Error:", msg);
+
+        try {
+          // parse JSON message
+          const data = JSON.parse(msg);
+
+          if (data.predictedClass) {
+            console.log("Prediction Result:", data.predictedClass);
+            console.log("Distances:", data.distances);
+
+            // send result to parent component (HomeScreen) via onDetection
+            onDetection(data);
+          } else if (msg.startsWith("ERROR:")) {
+            console.error("WebView Error:", msg);
+          } else if (msg === "MODEL_LOADED") {
+            setModelLoaded(true);
+            console.log("✅ Model loaded - ready in WebView - setModelLoaded True");
+          }
+
+          // old way - before json value being passed
+          // if (msg === "MODEL_LOADED") {
+          //   // Model ready, send videoUri
+          //   setModelLoaded(true);
+          //   console.log("✅ Model loaded - ready in WebView - setModelLoaded True");
+          // } else if (msg.startsWith("RESULT:")) {
+          //   const result = msg.replace("RESULT:", "");
+          //   console.log("Detection Result:", result);
+          //   onDetection(result);
+          //   // update UI with result
+          // } else if (msg.startsWith("ERROR:")) {
+          //   // handle errors
+          //   console.error("WebView Error:", msg);
+          // }
+        } catch (error) {
+          console.error('❌ Failed to parse WebView message:', error);
         }
+        
       }}
       onLoadEnd={() => console.log("✅ WebView fully loaded")}
       onError={(syntheticEvent) => {
