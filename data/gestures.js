@@ -5,6 +5,12 @@ export const gestures = [
         video: require('../assets/info_gathering.mp4')
     },
     {
+        id: "H01",
+        name: "A",
+        video: "https://drive.google.com/uc?export=preview&id=1wfc2rC_BAm4govNNcIEfiQ37QH85-4Y1"
+        // https://drive.google.com/file/d/1wfc2rC_BAm4govNNcIEfiQ37QH85-4Y1/view?usp=sharing
+    },
+    {
         id: "K01",
         name: "Aku",
         video: "" 

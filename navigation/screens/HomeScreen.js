@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, Button, StyleSheet, Alert, Dimensions } from 'react-native';
+import { View, Text, Button, StyleSheet, Alert, Dimensions, ScrollView } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as FileSystem from 'expo-file-system';
 import Model from '../../components/Model';
-import { ScrollView } from 'react-native-gesture-handler';
 
 // showing video on screen
 const VideoPlayer = ({ videoUrl }) => {

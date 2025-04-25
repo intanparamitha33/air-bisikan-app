@@ -25,13 +25,20 @@
         "U", "V", "W", "X", "Y", "Z",
 
         // 0-9
-        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
 
         // word
         "Aku", "Kamu", "Cinta", "Kenapa", "Tidak", "Kecewa",
         "Mau", "Bicara", "Semangat", "TerimaKasih",
         "Sedih", "Maaf", "Sabar", "Sayang", "Senang"
       ];
+
+      // di json: 
+      // 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+      //  A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z
+      // Aku, Kamu, Cinta, Kenapa, Tidak, Kecewa, Mau, Bicara, Semangat, TerimaKasih, Sedih, Maaf, Sabar, Sayang, Senang
+
+
       let supportSet = []; // array for support set's keypoints
       let supportLabels = []; // label for support set
       let classNames = []; // class name for support set
@@ -93,7 +100,7 @@
       // Load TensorFlow.js model
       async function loadModel() {
         try {
-          model = await tf.loadGraphModel("http://192.168.110.112:8080/model.json");
+          model = await tf.loadGraphModel("http://192.168.93.52:8080/model.json");
           document.getElementById("status").innerText = "Model loaded!";
           console.log("✅ Model loaded!");
           window.ReactNativeWebView?.postMessage("MODEL_LOADED");
@@ -107,9 +114,6 @@
 
       // Load support set
       async function loadSupportSet() {
-        // Dalam aplikasi nyata, Anda perlu memuat support set dari dataset eksternal
-        // Untuk simulasi, kita akan membuat data dummy (harusnya dari dataset seperti di Python)
-
         // url supp set keypoints 
         // 1shot: https://drive.google.com/file/d/1iHv5jMT3wwVQ4LhN2U_QNervaPXMVxZx/view?usp=sharing
         // 5shot: https://drive.google.com/file/d/1AAqUtFV-h7bwutK0A-1ZLE1fgtIp9bH7/view?usp=sharing 
@@ -120,10 +124,15 @@
         // 5shot: https://drive.google.com/uc?export=download&id=1AAqUtFV-h7bwutK0A-1ZLE1fgtIp9bH7
         // 10shot: https://drive.google.com/uc?export=download&id=11cJd7s0j2kWeTiDofIVc0wtpUCrEzRhg
 
-        const jsonUrl = "https://drive.google.com/uc?export=download&id=1iHv5jMT3wwVQ4LhN2U_QNervaPXMVxZx";
+        // no cors - github url
+        // 1shot: https://raw.githubusercontent.com/intanparamitha33/air-bisikan-app/refs/heads/main/data/support_set_1.json
+        // 5shot: https://raw.githubusercontent.com/intanparamitha33/air-bisikan-app/refs/heads/main/data/support_set_5.json 
+        // 10shot: https://raw.githubusercontent.com/intanparamitha33/air-bisikan-app/refs/heads/main/data/support_set_10.json 
+
+        const jsonUrl = "https://raw.githubusercontent.com/intanparamitha33/air-bisikan-app/refs/heads/main/data/support_set_10.json";
         const resp = await fetch(jsonUrl);
         if (!resp.ok) {
-          throw new Error(`Failed to fetch support set: ${resp.statusText}`);
+          throw new Error(`Error loading support set: ${resp.statusText}`);
         }
         const data = await resp.json();
 
@@ -133,42 +142,43 @@
         supportLabels = [];
         classNames = [];
 
-        // for dummy
-        // for (let i = 0; i < gestureLabels.length; i++) {
-        //   const className = gestureLabels[i];
-        //   // Simulasi: Buat data dummy untuk support set (30 frame, 84 keypoints)
-        //   const dummySample = new Array(30).fill(0).map(() => new Array(84).fill(Math.random())); // Data acak
-        //   supportSet.push(dummySample);
-        //   supportLabels.push(i);
-        //   classNames.push(className);
-        // }
+        // Check if data structure is array of objects with label and samples
+        if (Array.isArray(data)) {
+          // count total class to validate
+          const uniqueLabels = new Set(data.map(item => item.label));
+          console.log(`Found ${uniqueLabels.size} unique labels in support set data.`);
 
-        // data validation
-        if (!Array.isArray(data) || data.length !== gestureLabels.length) {
-          throw new Error(`Support set data length (${data.length}) does not match gestureLabels (${gestureLabels.length})`);
+          // process each class
+          data.forEach((item, idx) => {
+            const label = item.label;
+            const samples = item.samples || [item.keypoints]; // support both formats ( 1 or more samples )
+
+            // skip classes not in our gestureLabels
+            if (!gestureLabels.includes(label)) {
+              console.warn(`Label ${label} not in gestureLabels, skipping...`);
+              return;
+            }
+
+            // process each sample for this class
+            if (Array.isArray(samples)) {
+              samples.forEach(keypoints => {
+                // keypoints validation - should be [30, 84]
+                if (!Array.isArray(keypoints) || keypoints.length !== 30 || keypoints[0].length !== 84) {
+                  console.warn(`Invalid keypoints shape for class ${label}: Expected [30, 84], got [${keypoints.length}, ${keypoints[0]?.length}]`);
+                  return;
+                }
+
+                supportSet.push(keypoints);
+                supportLabels.push(gestureLabels.indexOf(label));
+                classNames.push(label);
+              })
+            } else {
+              console.warn(`Samples for ${label} is not an array.`);
+            }
+          })
+        } else {
+          throw new Error("Invalid support set data format: expected array");
         }
-
-        data.forEach((item, idx) => {
-          const label = item.label;
-          const keypoints = item.keypoints;
-
-          // label validation
-          if (!gestureLabels.includes(label)) {
-            console.warn(`Label ${label} not in gestureLabels, skipping...`);
-            return;
-          }
-
-          // keypoints validation -> must be [30, 84]
-          if (!Array.isArray(keypoints) || keypoints.length !== 30 || keypoints[0].length !== 84) {
-            throw new Error(`Invalid keypoints shape for class ${label}: Expected [30, 84], got [${keypoints.length}, ${keypoints[0]?.length}]`);
-          }
-
-          supportSet.push(keypoints);
-          supportLabels.push(idx);
-          classNames.push(label);
-        })
-
-        console.log(`✅ Loaded support set for ${supportSet.length} classes, ${kShot} samples per class`);
       }
 
       // Seek to specific time in video
@@ -199,11 +209,18 @@
         let processedFrameCount = 0;
         let frameIdx = 0;
 
+        window.ReactNativeWebView?.postMessage("LOG: Starting keyframe extraction...");
         while (processedFrameCount < frameNeeded && frameIdx < totalFrames) {
+          const startTime = performance.now();
           const time = frameIdx * frameInterval;
           await seekVideo(video, time);
           const keypoints = await detectHands(video, videoWidth, videoHeight);
+          const endTime = performance.now();
 
+          window.ReactNativeWebView?.postMessage("LOG: Frame " + (frameIdx + 1) + " processed in " + (endTime - startTime) + "ms");
+
+          // keyframe selection (optimization) -> push frame with high confidence value
+          // del keypoints.confidence if it's not working 
           if (keypoints && isValidKeypoints(keypoints)) {
             extractedFrames.push(keypoints);
             lastValidFrame = keypoints.slice(); // copy to avoid reference issue
@@ -228,9 +245,14 @@
 
         if (extractedFrames.length === 0) {
           throw new Error("No hand detected in any frame");
+        } else if (extractedFrames.length > 0) {
+          console.log("First frame keypoints:", extractedFrames[0]);
+          window.ReactNativeWebView?.postMessage("LOG: First frame keypoints sample: " + 
+            JSON.stringify(extractedFrames[0].slice(0, 10))); // Show first 10 points only
         }
 
         console.log(`Extracted ${extractedFrames.length} frames with 84 keypoints each`);
+        window.ReactNativeWebView?.postMessage("LOG: Extracted " + extractedFrames.length + " frames");
       }
 
       // Frame Processing - detect hands in current frame
@@ -255,7 +277,8 @@
                 const handLandmarks = results.multiHandLandmarks[i];
                 let keypoints = [];
 
-                for (const lm in handLandmarks) {
+                for (let j = 0; j < handLandmarks.length; j++) {
+                  const lm = handLandmarks[j];
                   const x = lm.x * videoWidth; // pixel coordinates (like in Colab)
                   const y = lm.y * videoHeight;
                   keypoints.push(x, y);
@@ -279,6 +302,9 @@
         // const normalized = new Array(84).fill(0); // 2 hands * 21 * 2
 
         console.log("Sample normalized values:", normalizedKeypoints.slice(0, 4).map((v) => v.toFixed(4)));
+        window.ReactNativeWebView?.postMessage("LOG: Normalized keypoints sample: " + 
+            JSON.stringify(normalizedKeypoints.slice(0, 10).map(v => v.toFixed(10)))); // Show first 10 points only
+
         return normalizedKeypoints;
       }
 
@@ -298,7 +324,8 @@
         // add batch dimension
         tensor = tensor.expandDims(0); // [1, 84, 30]
 
-        console.log("Final tensor shape:", tensor.shape);
+        console.log("Final tensor shape:", tensor.shape); // it seems .shape doesn't work
+        window.ReactNativeWebView?.postMessage("LOG: Final tensor shape: [1, 84, 30]");
         console.log("Sample normalized values (frame 0, point 0):", frames[0][0].toFixed(4), frames[0][1].toFixed(4));
 
         // return tf.tensor3d([frames], [1, 84, frameNeeded]);
@@ -330,17 +357,36 @@
           const distance = pairwiseDist.arraySync();
 
           // find class with the closest distance
-          const nearestIdx = pairwiseDist.argMin().dataSync()[0];
+          // const nearestIdx = pairwiseDist.argMin().dataSync()[0];
+
+          // get all the distances as an array
+          // const distArray = Array.from(distance);
+
+          // find the index of the minimum distance
+          const nearestIdx = distance.indexOf(Math.min(...distance));
+
+          // get the corresponding label and class name
           const predictedLabel = supportLabels[nearestIdx];
-          const predictedClass = classNames[predictedLabel];
+          const predictedClass = classNames[nearestIdx] || "Unknown"; // should use nearestIdx directly, not label || if there's undefined label
+          // const predictedClass = classNames[predictedLabel] || "Unknown";
 
           // create dictionary of distance for analysis
           const distanceDict = {};
           for (let i = 0; i < distance.length; i++) {
             const label = supportLabels[i];
-            const classNm = classNames[label];
-            distanceDict[classNm] = distance[i];
+            const classNm = classNames[i]; // use direct index instead of label lookup
+            if (distanceDict[classNm] === undefined || distance[i] < distanceDict[classNm]) {
+              distanceDict[classNm] = distance[i]; // ensure nearest distance per class 
+            }
           }
+
+          // logging values
+          const testMinDist = Math.min(...distance);
+          window.ReactNativeWebView?.postMessage("LOG: Minimum distance:" + testMinDist);
+          window.ReactNativeWebView?.postMessage("LOG: Index of minimum:" + nearestIdx);
+          window.ReactNativeWebView?.postMessage("LOG: Predicted class:" + predictedClass);
+          window.ReactNativeWebView?.postMessage("LOG: Predicted label:" + predictedLabel);
+          window.ReactNativeWebView?.postMessage("LOG: All distances in dictionary:" + distanceDict);
 
           return { predictedClass, distanceDict };
 
@@ -351,76 +397,104 @@
           // return detection[0]; // return detected class index
         } catch (error) {
           throw new Error(`Inference failed: ${error.message}`);
-        } 
+        }
       }
 
       // Process video from React Native
       async function processVideo(base64Video) {
         console.log("index.html - Start processing video")
         try {
-          document.getElementById("status").innerText = "Processing video...";
-          console.log("📥 Base64 received, length:", base64Video.length);
-          console.log("📥 Base64 preview:", base64Video.slice(0, 30)); // Cek header
-
-          const video = document.createElement('video');
-          // video.src = inputVideoUri;
-          video.src = `data:video/mp4;base64,${base64Video}`;
-          console.log("index.html - Process Video - video.src:", video.src)
-          video.crossOrigin = 'anonymous';
-
-          // wait for video metadata
-          await new Promise((resolve, reject) => {
-            video.onloadedmetadata = () => { 
-              console.log("✅ Video metadata loaded: duration =");
-              video.currentTime = 0;
-              resolve();
-            }
-            // video.onloadedmetadata = resolve();
-            video.onerror = () => {
-              console.error("❌ Video failed to load, error code:", video.error.code, 'message:', video.error.message);
-              reject(new Error(`Failed to load video: ${video.error.message}`));
-            }
-            video.oncanplay = () => {
-              console.log("📺 Video can play");
-            };
+          // function for handling timeout
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => {
+              reject(new Error("Process timed out after 30s..."));
+            }, 30000); // 30s
           })
 
-          await hands.initialize();
-          console.log("🤲 MediaPipe Hands initialized");
+          // function for processing video
+          const processPromise = new Promise(async (resolve, reject) => {
+            try {
+              document.getElementById("status").innerText = "Processing video...";
+              console.log("📥 Base64 received, length:", base64Video.length);
+              console.log("📥 Base64 preview:", base64Video.slice(0, 30)); // Cek header
 
-          // Extract frames with hand landmarks
-          await extractKeyFrames(video);
+              const video = document.createElement('video');
+              // video.src = inputVideoUri;
+              video.src = `data:video/mp4;base64,${base64Video}`;
+              console.log("index.html - Process Video - video.src:", video.src)
+              video.crossOrigin = 'anonymous';
 
-          // Prepare tensor input (1, 84, 30)
-          const inputTensor = prpInputTensor(extractedFrames);
+              // wait for video metadata
+              await new Promise((resolve, reject) => {
+                video.onloadedmetadata = () => { 
+                  console.log("✅ Video metadata loaded: duration =");
+                  video.currentTime = 0;
+                  resolve();
+                }
+                // video.onloadedmetadata = resolve();
+                video.onerror = () => {
+                  console.error("❌ Video failed to load, error code:", video.error.code, 'message:', video.error.message);
+                  reject(new Error(`Failed to load video: ${video.error.message}`));
+                }
+                video.oncanplay = () => {
+                  console.log("📺 Video can play");
+                };
+              })
 
-          // Prepare support set tensor
-          const supportFrames = supportSet.map(frames => frames.map(frame => normalizeLandmarks(frame)));
-          let supportTensor = tf.tensor3d(supportFrames, [supportFrames.length, 30, 84]);
-          supportTensor = supportTensor.transpose([0, 2, 1]); // [numSupport, 84, 30]
+              window.ReactNativeWebView?.postMessage("LOG: Initializing MediaPipe Hands...");
+              await hands.initialize();
+              window.ReactNativeWebView?.postMessage("LOG: 🤲 MediaPipe Hands initialized");
 
-          // Predict class
-          const { predictedClass, distanceDict } = await predictClass(inputTensor, supportTensor, supportLabels, classNames);
+              // Extract frames with hand landmarks
+              window.ReactNativeWebView?.postMessage("LOG: Extracting keyframes input video...");
+              await extractKeyFrames(video);
+              window.ReactNativeWebView?.postMessage("LOG: Keyframes extracted: " + extractedFrames.length);
 
-          // Run model inference - old way
-          // const result = await runInference(inputTensor);
+              // Prepare tensor input (1, 84, 30)
+              window.ReactNativeWebView?.postMessage("LOG: Preparing input tensor...");
+              const inputTensor = prpInputTensor(extractedFrames);
+              window.ReactNativeWebView?.postMessage("LOG: Input tensor shape: " + inputTensor.shape);
 
-          console.log("🎉 Detection Result:", result);
-          console.log("Distances to each class:", distanceDict);
+              // Prepare support set tensor
+              window.ReactNativeWebView?.postMessage("LOG: Preparing support tensor...");
+              const numSupports =  supportSet.length;
+              // const supportFrames = supportSet.map(frames => frames.map(frame => normalizeLandmarks(frame)));
+              const supportFrames = supportSet;
 
-          // Send result back to app (RN)
-          const resultMsg = JSON.stringify({
-            predictedClass: predictedClass,
-            distances: distanceDict
+              // Create tensor with shape [numSupports, 30, 84]
+              let supportTensor = tf.tensor3d(supportFrames, [numSupports, 30, 84]);
+              supportTensor = supportTensor.transpose([0, 2, 1]); // [numSupports, 84, 30]
+
+              // Predict class
+              const { predictedClass, distanceDict } = await runInference(inputTensor, supportTensor, supportLabels, classNames);
+
+              // Run model inference - old way
+              // const result = await runInference(inputTensor);
+
+              // Send result back to app (RN)
+              const resultMsg = JSON.stringify({
+                predictedClass: predictedClass,
+                distances: distanceDict
+              })
+              console.log("Sending to RN:", resultMsg); // Debug
+              // window.ReactNativeWebView?.postMessage("RESULT:" + result);
+              window.ReactNativeWebView?.postMessage(resultMsg);
+
+              document.getElementById("status").innerText =  `Predicted Class: ${resultMsg.predictedClass}`;
+              resolve(resultMsg);
+            } catch (error) {
+              reject(error);
+            }
           })
-          // window.ReactNativeWebView?.postMessage("RESULT:" + result);
-          window.ReactNativeWebView?.postMessage(resultMsg);
 
-          document.getElementById("status").innerText =  `Predicted Class: $predictedClass`;
-
+          // race between process & timeout
+          await Promise.race([processPromise, timeoutPromise]);
         } catch (error) {
-          console.error("Video processing failed:", error);
-          window.ReactNativeWebView?.postMessage("ERROR:" + error.message);
+          // catch err from TO or process
+          console.error("❌ Error:", error.message);
+          window.ReactNativeWebView?.postMessage("LOG: Video processing failed: " + error.message);
+          const errorMsg = JSON.stringify({ error: error.message });
+          window.ReactNativeWebView?.postMessage(JSON.stringify({ error: error.message }));
           document.getElementById("status").innerText = "❌ Failed to process video";
         }
       }
@@ -549,4 +623,79 @@ async function extractKeyFrames(video) {
           throw new Error("No hand detected in any frame");
         }
       }
+
+      // data validation - Check if data structure is array of objects with label and samples
+        if (!Array.isArray(data) || data.length !== gestureLabels.length) {
+          throw new Error(`Support set data length (${data.length}) does not match gestureLabels (${gestureLabels.length})`);
+        }
+
+        data.forEach((item, idx) => {
+          const label = item.label;
+          const keypoints = item.keypoints;
+
+          // label validation
+          if (!gestureLabels.includes(label)) {
+            console.warn(`Label ${label} not in gestureLabels, skipping...`);
+            return;
+          }
+
+          // keypoints validation -> must be [30, 84]
+          if (!Array.isArray(keypoints) || keypoints.length !== 30 || keypoints[0].length !== 84) {
+            throw new Error(`Invalid keypoints shape for class ${label}: Expected [30, 84], got [${keypoints.length}, ${keypoints[0]?.length}]`);
+          }
+
+          supportSet.push(keypoints);
+          supportLabels.push(idx);
+          classNames.push(label);
+        })
+
+        console.log(`✅ Loaded support set for ${supportSet.length} classes, 1 samples per class`);
+
+              async function runInference(inputTensor, supportTensor, supportLabels, classNames) {
+        try {
+          // compute embedding for input video
+          const videoEmbed = model.execute({ input: inputTensor }); // [1, 128]
+          console.log("Video embedding shape:", videoEmbed.shape);
+
+          // compute embedding for support set
+          const supportEmbed = model.execute({ input: supportTensor }); // [numSupport, 128]
+          console.log("Support embedding shape:", supportEmbed.shape);
+
+          // calculate the Euclidean distance
+          const pairwiseDist = computePairwiseDist(videoEmbed, supportEmbed); // [numSupport]
+          const distance = pairwiseDist.arraySync();
+
+          // find class with the closest distance
+          // const nearestIdx = pairwiseDist.argMin().dataSync()[0];
+
+          // get all the distances as an array
+          const distArray = Array.from(distance);
+
+          // find the index of the minimum distance
+          const nearestIdx = distArray.indexOf(Math.min(...distArray));
+
+          // get the corresponding label and class name
+          const predictedLabel = supportLabels[nearestIdx];
+          const predictedClass = classNames[nearestIdx] || "Unknown"; // should use nearestIdx directly, not label || if there's undefined label
+          // const predictedClass = classNames[predictedLabel] || "Unknown";
+
+          // create dictionary of distance for analysis
+          const distanceDict = {};
+          for (let i = 0; i < distance.length; i++) {
+            const label = supportLabels[i];
+            const classNm = classNames[i]; // use direct index instead of label lookup
+            // const classNm = classNames[label];
+            distanceDict[classNm] = distance[i];
+          }
+
+          return { predictedClass, distanceDict };
+
+          // old way - usual classifier
+          // const output = model.execute({ input: inputTensor });
+          // console.log("Raw model output:", output.arraySync()); // Debug output
+          // const detection = await output.argMax(-1).data();
+          // return detection[0]; // return detected class index
+        } catch (error) {
+          throw new Error(`Inference failed: ${error.message}`);
+        }
 -->

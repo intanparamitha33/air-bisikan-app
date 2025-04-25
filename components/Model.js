@@ -18,29 +18,7 @@ export default function Model({ inputVideoUri, onDetection }) {
       const base64Format = await FileSystem.readAsStringAsync(videoUri, { encoding: FileSystem.EncodingType.Base64 });
       // return `data:video/mp4;base64,${base64Format}`;
       console.log("Base64 data in func getBase64:", base64Format.slice(0, 30)); // only for test the base64 data\
-
       console.log('📁 Base64 generated, length:', base64Format.length);
-      // const savePath = FileSystem.cacheDirectory + 'test_video.mp4'; // Pindah ke cache
-      // test base64 (open video in pc)
-      // await FileSystem.writeAsStringAsync(
-      //   FileSystem.documentDirectory + 'test_video.mp4',
-      //   base64Format,
-      //   { encoding: FileSystem.EncodingType.Base64 }
-      // );
-      // console.log('📁 Base64 saved to:', FileSystem.documentDirectory + 'test_video.mp4');
-
-      // Cek file size
-      // const fileInfo = await FileSystem.getInfoAsync(savePath);
-      // console.log('📁 File info:', fileInfo);
-
-      // Share file
-      // if (await Sharing.isAvailableAsync()) {
-      //   await Sharing.shareAsync(savePath);
-      //   console.log('📤 File shared!');
-      // } else {
-      //   console.error('❌ Sharing not available');
-      // }
-
       return base64Format;
     } catch (err) {
       console.error("❌ Error reading base64:", err);
@@ -92,8 +70,27 @@ export default function Model({ inputVideoUri, onDetection }) {
         const msg = event.nativeEvent.data;
         console.log(msg);
 
+        // handle message non-JSON
+        if (msg === "MODEL_LOADED") {
+          setModelLoaded(true);
+          console.log("✅ Model loaded - ready in WebView - setModelLoaded True");
+          return;
+        }
+
+        if (msg.startsWith("ERROR:")) {
+          const errorMsg = msg.replace("ERROR:", "");
+          console.error("WebView Error:", errorMsg);
+          onDetection({ error: errorMsg }); // send error to HomeScreen
+          return;
+        }
+
+        if (msg.startsWith("LOG:")) {
+          console.log("WebView Log:", msg.replace("LOG:", "")); // handle log from index.html
+          return;
+        }
+
+        // parse JSON msg (prediction result)
         try {
-          // parse JSON message
           const data = JSON.parse(msg);
 
           if (data.predictedClass) {
@@ -102,11 +99,11 @@ export default function Model({ inputVideoUri, onDetection }) {
 
             // send result to parent component (HomeScreen) via onDetection
             onDetection(data);
-          } else if (msg.startsWith("ERROR:")) {
-            console.error("WebView Error:", msg);
-          } else if (msg === "MODEL_LOADED") {
-            setModelLoaded(true);
-            console.log("✅ Model loaded - ready in WebView - setModelLoaded True");
+          } else if (data.error) {
+            console.error("WebView Error (JSON):", data.error);
+            onDetection({ error: data.error }); // handle err in json format
+          } else {
+            console.warn("Unknown message format:", data);
           }
 
           // old way - before json value being passed
@@ -124,14 +121,15 @@ export default function Model({ inputVideoUri, onDetection }) {
           //   console.error("WebView Error:", msg);
           // }
         } catch (error) {
-          console.error('❌ Failed to parse WebView message:', error);
+          console.error("❌ Failed to parse WebView message:", error);
+          onDetection({ error: "Invalid WebView message format" });
         }
         
       }}
       onLoadEnd={() => console.log("✅ WebView fully loaded")}
       onError={(syntheticEvent) => {
         const { nativeEvent } = syntheticEvent;
-        console.error('❌ WebView load error:', nativeEvent);
+        console.error("❌ WebView load error:", nativeEvent);
       }}
     />
   );
